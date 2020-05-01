@@ -7,6 +7,9 @@ use PHPMailer\PHPMailer\Exception;
 use Illuminate\Http\Request;
 use App\User;
 use App\UserDetail;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Facades\Validator;
 use App\Http\Requests\RegistrationRequest;
 class UserManagement extends Controller
@@ -25,7 +28,7 @@ class UserManagement extends Controller
             'f_name' => 'required',
             'l_name' => 'required',
             'pass' => 'required',
-            'email' => 'required|unique:user_details',
+            'email' => 'required',
             'dob' => 'required',
              'city' => 'required',
            
@@ -35,19 +38,21 @@ class UserManagement extends Controller
             return redirect()->back()->withErrors($v->errors())->withInput();
         }
     
-       $user=User::firstOrCreate(['first_name'=>$request->f_name,
-       'last_name'=>$request->l_name,
-       'password'=>\Hash::make($request->pass)
-       ]);
+        $first_name = request('f_name');
+        $last_name = request('l_name');
+        $password = request('pass');
+        $email = request('email');
+        $dob = request('dob');
+        $city = request('city');
 
-       $user_details=UserDetail::firstOrCreate(['email'=>$request->email,
-       'dob'=>$request->dob,
-       'city'=>$request->city,
-       'user_id'=>$user->id
-       ]);
-       $keycode = $this->generateRandomString(6);
-
-       $mail = new PHPMailer;
+       
+       if( $email==''){
+        return json_encode(array('statusCode'=>400,'msg'=>"Email not valid".$email));
+    }
+    else
+    {
+        $otp = $this->generateRandomString();
+        $mail = new PHPMailer;
 
        $mail->SMTPDebug = 0;                               
      
@@ -71,7 +76,7 @@ class UserManagement extends Controller
        $mail->isHTML(true);
        
        $mail->Subject = "Registration Successfully";
-       $mail->Body = "<i>$keycode is your OTP for login</i>";
+       $mail->Body = "<i>$otp is your OTP for login</i>";
        $mail->AltBody = "This is the plain text version of the email content";
        
        if(!$mail->send()) 
@@ -80,53 +85,76 @@ class UserManagement extends Controller
        } 
        else 
        {
-           echo "An otp sent to your email";
-           return view('verification')->with('otp', $keycode);
-       }
-       
-    
-     
+        session(['fname'=>$first_name]);
+        session(['lname'=>$last_name ]);
+        session(['pass'=>$password]);
+        session(['dob'=>$dob]);
+        session(['city'=> $city]);
+        session(['email'=> $email]);
+        session(['otp' => $otp]);
 
       
+           return view('verification');
+       }
+
     }
+}
+  
+      
+    
     public function verification(Request $request)
     {
-      
-     
-         $keycode=$request->otp_value;
-        $otp=$request->otp;
-
-        if( $keycode==$otp)
+        
+        $otp = trim(request('otp'));
+   
+        if($otp == session('otp'))
         {
+            $user = new User();
+
+            $user->first_name=session('fname');
+            $user->last_name=session('lname');
+            $user->password=session('pass');
+            $user->save();
+
+            $user_details = new UserDetail();
+            
+            $user_details->email=session('email');
+            
+            $user_details->dob=session('dob');
+           
+            $user_details->city=session('city');
+            
+            $user_details->user_id=$user->id;
+           
+            $user_details->save();
+
             return view('index');
 
         }
         else
         {
-            echo "OTP is not match please, try again";
-            return view('verification')->with('otp', $keycode);
+            return view('resend')->with(session('fname'),session('lname'),session('email'),session('dob'),session('city'),session('pass'));
         }
        
-    }
-    public  function generateRandomString($length = 20) {
-        $characters = '0123456789';
-        $charactersLength = strlen($characters);
-        $randomString = '';
-        for ($i = 0; $i < $length; $i++) {
-            $randomString .= $characters[rand(0, $charactersLength - 1)];
-        }
-        return $randomString;
+    
+}
+    public  function generateRandomString() {
+        $otp = mt_rand(1000,9999);
+        return $otp;
     }
     public function profile()
     {
        
         return view('profile');
     }
-    public function  loginCreate(Request  $request)
+    public function  loginCreate(Request $request)
     {
+      
         $login=User::leftjoin('user_details','user_details.user_id','users.id')
         ->select('users.id','users.first_name','users.password','users.last_name','user_details.email','user_details.city','user_details.dob')
-       -> where('user_details.email',$request->email)->first();
+       -> where('user_details.email',$request->email)
+       -> where('users.password',$request->pass)
+    ->first();
    
        if($login)
         {
@@ -159,5 +187,12 @@ class UserManagement extends Controller
         ->select('users.id','users.first_name','users.password','users.last_name','user_details.email','user_details.city','user_details.dob')
        -> where('user_details.user_id',$id)->first();
         return view('profile')->with('data',$login);;
+    }
+    public function logout(Request $request)
+    {
+        Auth::logout();
+        Session::flush();
+        Redirect::back();
+        return view('index');
     }
 }
